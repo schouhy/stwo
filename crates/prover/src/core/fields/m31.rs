@@ -224,4 +224,10 @@ mod tests {
 
         assert_eq!(pow2147483645(v), v.pow(2147483645));
     }
+
+    #[test]
+    fn reduce_edge_case() {
+        let val: u64 = (1 << 32) - 2;
+        assert_eq!(M31::reduce(val), m31!(0))
+    }
 }
