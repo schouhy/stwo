@@ -65,7 +65,7 @@ impl PolyOps for GpuBackend {
 
         Self::ifft_circle_part(&mut values, twiddle_tree);
         DEVICE.synchronize().unwrap();
-
+        
         Self::ifft_line_part(&mut values, twiddle_tree);
         DEVICE.synchronize().unwrap();
 
@@ -281,6 +281,7 @@ pub fn load_circle(device: &Arc<CudaDevice>) {
                 "put_one",
                 "ifft_circle_part",
                 "ifft_line_part",
+                "ifft_line_part_last_layers",
                 "rfft_circle_part",
                 "rfft_line_part",
                 "rescale",
@@ -329,11 +330,12 @@ impl GpuBackend {
 
     fn ifft_line_part(values: &mut BaseFieldCudaColumn, twiddle_tree: &TwiddleTree<GpuBackend>) {
         let size = values.len() as u32;
-        let log_values_size = u32::BITS - size.leading_zeros() - 1;
 
         let mut layer_domain_size = size >> 1;
         let mut layer_domain_offset = 0;
-        for i in 1..log_values_size {
+        let mut layer = 1;
+        const LAST_LAYER_FIRST_KERNEL: u32 = 2048;
+        while layer_domain_size > LAST_LAYER_FIRST_KERNEL {
             let config = Self::launch_config_for_num_elems(size >> 1, 256, 0);
             let kernel = DEVICE.get_func("circle", "ifft_line_part").unwrap();
             unsafe {
@@ -345,14 +347,32 @@ impl GpuBackend {
                         size,
                         layer_domain_size,
                         layer_domain_offset,
-                        i,
+                        layer,
                     ),
                 )
             }
             .unwrap();
+            layer += 1;
             layer_domain_size >>= 1;
             layer_domain_offset += layer_domain_size;
         }
+
+        let config = Self::launch_config_for_num_elems(size >> 1, LAST_LAYER_FIRST_KERNEL >> 1, LAST_LAYER_FIRST_KERNEL * 4);
+        let kernel = DEVICE.get_func("circle", "ifft_line_part_last_layers").unwrap();
+        unsafe {
+            kernel.launch(
+                config,
+                (
+                    values.as_mut_slice(),
+                    twiddle_tree.itwiddles.as_slice(),
+                    size,
+                    layer,
+                    layer_domain_size,
+                    layer_domain_offset,
+                ),
+            )
+        }
+        .unwrap();
     }
 
     fn rfft_line_part(values: &mut BaseFieldCudaColumn, twiddle_tree: &TwiddleTree<GpuBackend>) {
@@ -451,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_interpolate() {
-        let log_size = 20;
+        let log_size = 23;
 
         let size = 1 << log_size;
 
@@ -468,7 +488,7 @@ mod tests {
         let expected_result = CpuBackend::interpolate(cpu_evaluations, &cpu_twiddles);
         let result = GpuBackend::interpolate(gpu_evaluations, &gpu_twiddles);
 
-        assert_eq!(result.coeffs.to_cpu(), expected_result.coeffs);
+        assert!(result.coeffs.to_cpu() == expected_result.coeffs);
     }
 
     #[test]

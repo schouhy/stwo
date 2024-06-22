@@ -209,6 +209,60 @@ __global__ void ifft_line_part(uint32_t *values, uint32_t *inverse_twiddles_tree
     }
 }
 
+
+extern "C"
+__global__ void ifft_line_part_last_layers(uint32_t *values, uint32_t *inverse_twiddles_tree, int values_size, int layer, int number_coeffs_each_poly, int layer_domain_offset) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    extern __shared__ uint32_t s_data[];
+    int number_polynomials = 1 << layer;
+
+    if (blockIdx.x < number_polynomials && threadIdx.x < (number_coeffs_each_poly >> 1)) {
+        int idx0 = blockIdx.x + ((2 * threadIdx.x) << layer);
+        int idx1 = blockIdx.x + ((2 * threadIdx.x + 1) << layer);
+        int h = idx >> layer;
+
+        uint32_t val0 = values[idx0];
+        uint32_t val1 = values[idx1];
+        uint32_t twiddle = inverse_twiddles_tree[layer_domain_offset + threadIdx.x];
+        __syncthreads();
+        
+        s_data[2 * threadIdx.x] = m31_add(val0, val1);
+        s_data[2 * threadIdx.x + 1] = m31_mul(m31_sub(val0, val1), twiddle);
+
+        number_coeffs_each_poly >>= 1;
+        layer_domain_offset += number_coeffs_each_poly;
+        int new_layer = 1;
+
+        while(number_coeffs_each_poly > 1) {
+            int number_polynomials = 1 << new_layer;
+            int h = threadIdx.x >> new_layer;
+            int l = threadIdx.x & (number_polynomials - 1);
+            int idx0 = (h << (new_layer + 1)) + l;
+            int idx1 = idx0 + number_polynomials;
+
+            __syncthreads();
+            uint32_t val0 = s_data[idx0];
+            uint32_t val1 = s_data[idx1];
+            uint32_t twiddle = inverse_twiddles_tree[layer_domain_offset + h];
+            __syncthreads();
+            
+            s_data[idx0] = m31_add(val0, val1);
+            s_data[idx1] = m31_mul(m31_sub(val0, val1), twiddle);
+
+            number_coeffs_each_poly >>= 1;
+            layer_domain_offset += number_coeffs_each_poly;
+            new_layer += 1;
+        }
+
+        __syncthreads();
+        idx0 = blockIdx.x + ((2 * threadIdx.x) << layer);
+        idx1 = blockIdx.x + ((2 * threadIdx.x + 1) << layer);
+        values[idx0] = s_data[2 * threadIdx.x];
+        values[idx1] = s_data[2 * threadIdx.x + 1];
+    }
+}
+
 extern "C"
 __global__ void rfft_circle_part(uint32_t *values, uint32_t *inverse_twiddles_tree, int values_size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;

@@ -49,5 +49,5 @@ pub fn gpu_interpolate(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = simd_interpolate, gpu_interpolate);
+    targets = gpu_interpolate);
 criterion_main!(benches);
