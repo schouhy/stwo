@@ -2,14 +2,18 @@ use std::ops::Div;
 
 use num_traits::One;
 
-use crate::core::air::accumulation::{DomainEvaluationAccumulator, PointEvaluationAccumulator};
+use crate::core::air::accumulation::{ColumnAccumulator, DomainEvaluationAccumulator, PointEvaluationAccumulator};
 use crate::core::air::mask::shifted_mask_points;
 use crate::core::air::{Component, ComponentProver, ComponentTrace};
-use crate::core::backend::CpuBackend;
+use crate::core::backend::cpu::CpuCircleEvaluation;
+use crate::core::backend::simd::column::BaseColumn;
+use crate::core::backend::simd::SimdBackend;
+use crate::core::backend::{Column, CpuBackend};
 use crate::core::circle::{CirclePoint, Coset};
 use crate::core::constraints::{coset_vanishing, pair_vanishing};
 use crate::core::fields::m31::BaseField;
 use crate::core::fields::qm31::SecureField;
+use crate::core::fields::secure_column::SecureColumnByCoords;
 use crate::core::fields::{ExtensionOf, FieldExpOps};
 use crate::core::pcs::TreeVec;
 use crate::core::poly::circle::{CanonicCoset, CircleEvaluation};
@@ -141,7 +145,7 @@ impl FibonacciTraceGenerator {
     }
 }
 
-impl ComponentTraceGenerator<CpuBackend> for FibonacciTraceGenerator {
+impl ComponentTraceGenerator<SimdBackend> for FibonacciTraceGenerator {
     type Component = FibonacciComponent;
     type Inputs = FibonacciInput;
 
@@ -153,7 +157,7 @@ impl ComponentTraceGenerator<CpuBackend> for FibonacciTraceGenerator {
     fn write_trace(
         component_id: &str,
         registry: &mut ComponentGenerationRegistry,
-    ) -> ColumnVec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
+    ) -> ColumnVec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         let trace_generator = registry.get_generator_mut::<Self>(component_id);
         assert!(trace_generator.inputs_set(), "Fibonacci input not set.");
         let trace_domain = CanonicCoset::new(trace_generator.input.unwrap().log_size);
@@ -170,14 +174,14 @@ impl ComponentTraceGenerator<CpuBackend> for FibonacciTraceGenerator {
         }
 
         // Returns as a CircleEvaluation.
-        vec![CircleEvaluation::new_canonical_ordered(trace_domain, trace)]
+        vec![CircleEvaluation::new_canonical_ordered(trace_domain, BaseColumn::from(trace.into_iter().collect()))]
     }
 
     fn write_interaction_trace(
         &self,
-        _trace: &ColumnVec<&CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>>,
+        _trace: &ColumnVec<&CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>>,
         _elements: &InteractionElements,
-    ) -> ColumnVec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
+    ) -> ColumnVec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         vec![]
     }
 
@@ -187,11 +191,11 @@ impl ComponentTraceGenerator<CpuBackend> for FibonacciTraceGenerator {
     }
 }
 
-impl ComponentProver<CpuBackend> for FibonacciComponent {
+impl ComponentProver<SimdBackend> for FibonacciComponent {
     fn evaluate_constraint_quotients_on_domain(
         &self,
-        trace: &ComponentTrace<'_, CpuBackend>,
-        evaluation_accumulator: &mut DomainEvaluationAccumulator<CpuBackend>,
+        trace: &ComponentTrace<'_, SimdBackend>,
+        evaluation_accumulator: &mut DomainEvaluationAccumulator<SimdBackend>,
         _interaction_elements: &InteractionElements,
         _lookup_values: &LookupValues,
     ) {
@@ -200,9 +204,17 @@ impl ComponentProver<CpuBackend> for FibonacciComponent {
         let trace_eval_domain = CanonicCoset::new(self.log_size + 1).circle_domain();
         let trace_eval = poly.evaluate(trace_eval_domain).bit_reverse();
 
+        // CPU
+        let trace_eval = CpuCircleEvaluation::<BaseField, _>::new(trace_eval.domain, trace_eval.values.to_cpu());
+
         // Step constraint.
         let constraint_log_degree_bound = trace_domain.log_size() + 1;
-        let [mut accum] = evaluation_accumulator.columns([(constraint_log_degree_bound, 2)]);
+        let [accum] = evaluation_accumulator.columns([(constraint_log_degree_bound, 2)]);
+        let mut cpu_accum_col = accum.col.to_cpu();
+        let mut cpu_accum = ColumnAccumulator::<CpuBackend> {
+            random_coeff_powers: accum.random_coeff_powers.clone(),
+            col: &mut cpu_accum_col,
+        };
         let constraint_eval_domain = trace_eval_domain;
         for (off, point_coset) in [
             (0, constraint_eval_domain.half_coset),
@@ -216,15 +228,23 @@ impl ComponentProver<CpuBackend> for FibonacciComponent {
             for (i, point) in point_coset.iter().enumerate() {
                 let mask = [eval[i], eval[i as isize + mul], eval[i as isize + 2 * mul]];
                 let mut res = self.boundary_constraint_eval_quotient_by_mask(point, &[mask[0]])
-                    * accum.random_coeff_powers[0];
+                    * cpu_accum.random_coeff_powers[0];
                 res += self.step_constraint_eval_quotient_by_mask(point, &mask)
-                    * accum.random_coeff_powers[1];
-                accum.accumulate(bit_reverse_index(i + off, constraint_log_degree_bound), res);
+                    * cpu_accum.random_coeff_powers[1];
+                cpu_accum.accumulate(bit_reverse_index(i + off, constraint_log_degree_bound), res);
             }
         }
+        *accum.col = SecureColumnByCoords::<SimdBackend> {
+            columns: [
+                BaseColumn::from(cpu_accum.col.columns[0].clone().into_iter().collect()),
+                BaseColumn::from(cpu_accum.col.columns[1].clone().into_iter().collect()),
+                BaseColumn::from(cpu_accum.col.columns[2].clone().into_iter().collect()),
+                BaseColumn::from(cpu_accum.col.columns[3].clone().into_iter().collect()),
+            ],
+        };
     }
 
-    fn lookup_values(&self, _trace: &ComponentTrace<'_, CpuBackend>) -> LookupValues {
+    fn lookup_values(&self, _trace: &ComponentTrace<'_, SimdBackend>) -> LookupValues {
         LookupValues::default()
     }
 }

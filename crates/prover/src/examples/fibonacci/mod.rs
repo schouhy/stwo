@@ -1,10 +1,11 @@
-use std::iter::zip;
 
 use num_traits::One;
+use tracing::{span, Level};
 
-use self::air::{FibonacciAir, MultiFibonacciAir};
+use self::air::{FibonacciAir};
 use self::component::FibonacciComponent;
-use crate::core::backend::cpu::CpuCircleEvaluation;
+use crate::core::backend::simd::column::BaseColumn;
+use crate::core::backend::simd::SimdBackend;
 use crate::core::channel::{Blake2sChannel, Channel};
 use crate::core::fields::m31::BaseField;
 use crate::core::fields::{FieldExpOps, IntoSlice};
@@ -31,7 +32,7 @@ impl Fibonacci {
         }
     }
 
-    pub fn get_trace(&self) -> CpuCircleEvaluation<BaseField, BitReversedOrder> {
+    pub fn get_trace(&self) -> CircleEvaluation<SimdBackend, BaseField, BitReversedOrder> {
         // Trace.
         let trace_domain = CanonicCoset::new(self.air.component.log_size);
         let mut trace = Vec::with_capacity(trace_domain.size());
@@ -47,16 +48,23 @@ impl Fibonacci {
         }
 
         // Returns as a CircleEvaluation.
-        CircleEvaluation::new_canonical_ordered(trace_domain, trace)
+        CircleEvaluation::new_canonical_ordered(trace_domain, BaseColumn::from(trace.into_iter().collect()))
     }
 
     pub fn prove(&self) -> Result<StarkProof, ProvingError> {
+        println!("FIB {}", self.air.component.log_size);
+
         let trace = self.get_trace();
+        // println!("trace: {:?}", trace.values.to_cpu());
+
+        let span = span!(Level::INFO, "fibonacci prove").entered();
         let channel = &mut Blake2sChannel::new(Blake2sHasher::hash(BaseField::into_slice(&[self
             .air
             .component
             .claim])));
-        commit_and_prove(&self.air, channel, vec![trace])
+        let proof = commit_and_prove::<SimdBackend>(&self.air, channel, vec![trace]);
+        span.exit();
+        proof
     }
 
     pub fn verify(&self, proof: StarkProof) -> Result<(), VerificationError> {
@@ -64,47 +72,6 @@ impl Fibonacci {
             .air
             .component
             .claim])));
-        commit_and_verify(proof, &self.air, channel)
-    }
-}
-
-pub struct MultiFibonacci {
-    pub air: MultiFibonacciAir,
-    log_sizes: Vec<u32>,
-    claims: Vec<BaseField>,
-}
-
-impl MultiFibonacci {
-    pub fn new(log_sizes: Vec<u32>, claims: Vec<BaseField>) -> Self {
-        assert!(!log_sizes.is_empty());
-        assert_eq!(log_sizes.len(), claims.len());
-        let air = MultiFibonacciAir::new(&log_sizes, &claims);
-        Self {
-            air,
-            log_sizes,
-            claims,
-        }
-    }
-
-    pub fn get_trace(&self) -> Vec<CpuCircleEvaluation<BaseField, BitReversedOrder>> {
-        zip(&self.log_sizes, &self.claims)
-            .map(|(log_size, claim)| {
-                let fib = Fibonacci::new(*log_size, *claim);
-                fib.get_trace()
-            })
-            .collect()
-    }
-
-    pub fn prove(&self) -> Result<StarkProof, ProvingError> {
-        let channel =
-            &mut Blake2sChannel::new(Blake2sHasher::hash(BaseField::into_slice(&self.claims)));
-        let trace = self.get_trace();
-        commit_and_prove(&self.air, channel, trace)
-    }
-
-    pub fn verify(&self, proof: StarkProof) -> Result<(), VerificationError> {
-        let channel =
-            &mut Blake2sChannel::new(Blake2sHasher::hash(BaseField::into_slice(&self.claims)));
         commit_and_verify(proof, &self.air, channel)
     }
 }
@@ -119,7 +86,7 @@ mod tests {
     use rand::rngs::SmallRng;
     use rand::{Rng, SeedableRng};
 
-    use super::{Fibonacci, MultiFibonacci};
+    use super::{Fibonacci};
     use crate::core::air::accumulation::PointEvaluationAccumulator;
     use crate::core::air::{AirExt, AirProverExt, Component, ComponentTrace};
     use crate::core::channel::{Blake2sChannel, Channel};
@@ -234,10 +201,10 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test_log::test]
     fn test_fib_prove() {
-        const FIB_LOG_SIZE: u32 = 5;
-        let fib = Fibonacci::new(FIB_LOG_SIZE, m31!(443693538));
+        const FIB_LOG_SIZE: u32 = 23;
+        let fib = Fibonacci::new(FIB_LOG_SIZE, BaseField::from(729665688));
 
         let proof = fib.prove().unwrap();
         fib.verify(proof).unwrap();
@@ -304,23 +271,5 @@ mod tests {
 
         let error = fib.verify(invalid_proof).unwrap_err();
         assert_matches!(error, VerificationError::Merkle(_));
-    }
-
-    #[test]
-    fn test_rectangular_multi_fibonacci() {
-        let multi_fib = MultiFibonacci::new(vec![5; 16], vec![m31!(443693538); 16]);
-        let proof = multi_fib.prove().unwrap();
-        multi_fib.verify(proof).unwrap();
-    }
-
-    #[test]
-    fn test_mixed_degree_multi_fibonacci() {
-        let multi_fib = MultiFibonacci::new(
-            // TODO(spapini): Change order of log_sizes.
-            vec![3, 5, 7],
-            vec![m31!(1056169651), m31!(443693538), m31!(722122436)],
-        );
-        let proof = multi_fib.prove().unwrap();
-        multi_fib.verify(proof).unwrap();
     }
 }

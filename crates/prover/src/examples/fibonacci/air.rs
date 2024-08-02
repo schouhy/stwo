@@ -1,8 +1,7 @@
-use itertools::{zip_eq, Itertools};
 
 use super::component::{FibonacciComponent, FibonacciInput, FibonacciTraceGenerator};
 use crate::core::air::{Air, AirProver, Component, ComponentProver};
-use crate::core::backend::CpuBackend;
+use crate::core::backend::simd::SimdBackend;
 use crate::core::channel::Blake2sChannel;
 use crate::core::fields::m31::BaseField;
 use crate::core::poly::circle::CircleEvaluation;
@@ -36,20 +35,20 @@ impl AirTraceVerifier for FibonacciAirGenerator {
     }
 }
 
-impl AirTraceGenerator<CpuBackend> for FibonacciAirGenerator {
-    fn write_trace(&mut self) -> Vec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
+impl AirTraceGenerator<SimdBackend> for FibonacciAirGenerator {
+    fn write_trace(&mut self) -> Vec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         FibonacciTraceGenerator::write_trace("fibonacci", &mut self.registry)
     }
 
     fn interact(
         &self,
-        _trace: &ColumnVec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>>,
+        _trace: &ColumnVec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>>,
         _elements: &InteractionElements,
-    ) -> Vec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
+    ) -> Vec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         vec![]
     }
 
-    fn to_air_prover(&self) -> impl AirProver<CpuBackend> {
+    fn to_air_prover(&self) -> impl AirProver<SimdBackend> {
         let component_generator = self
             .registry
             .get_generator::<FibonacciTraceGenerator>("fibonacci");
@@ -96,16 +95,16 @@ impl AirTraceVerifier for FibonacciAir {
     }
 }
 
-impl AirTraceGenerator<CpuBackend> for FibonacciAir {
+impl AirTraceGenerator<SimdBackend> for FibonacciAir {
     fn interact(
         &self,
-        _trace: &ColumnVec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>>,
+        _trace: &ColumnVec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>>,
         _elements: &InteractionElements,
-    ) -> Vec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
+    ) -> Vec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         vec![]
     }
 
-    fn to_air_prover(&self) -> impl AirProver<CpuBackend> {
+    fn to_air_prover(&self) -> impl AirProver<SimdBackend> {
         self.clone()
     }
 
@@ -114,73 +113,8 @@ impl AirTraceGenerator<CpuBackend> for FibonacciAir {
     }
 }
 
-impl AirProver<CpuBackend> for FibonacciAir {
-    fn prover_components(&self) -> Vec<&dyn ComponentProver<CpuBackend>> {
+impl AirProver<SimdBackend> for FibonacciAir {
+    fn prover_components(&self) -> Vec<&dyn ComponentProver<SimdBackend>> {
         vec![&self.component]
-    }
-}
-
-#[derive(Clone)]
-pub struct MultiFibonacciAir {
-    pub components: Vec<FibonacciComponent>,
-}
-
-impl MultiFibonacciAir {
-    pub fn new(log_sizes: &[u32], claim: &[BaseField]) -> Self {
-        let mut components = Vec::new();
-        for (log_size, claim) in zip_eq(log_sizes.iter(), claim.iter()) {
-            components.push(FibonacciComponent::new(*log_size, *claim));
-        }
-        Self { components }
-    }
-}
-
-impl Air for MultiFibonacciAir {
-    fn components(&self) -> Vec<&dyn Component> {
-        self.components
-            .iter()
-            .map(|c| c as &dyn Component)
-            .collect_vec()
-    }
-}
-
-impl AirTraceVerifier for MultiFibonacciAir {
-    fn interaction_elements(&self, _channel: &mut Blake2sChannel) -> InteractionElements {
-        InteractionElements::default()
-    }
-
-    fn verify_lookups(&self, _lookup_values: &LookupValues) -> Result<(), VerificationError> {
-        Ok(())
-    }
-}
-
-impl AirTraceGenerator<CpuBackend> for MultiFibonacciAir {
-    fn interact(
-        &self,
-        _trace: &ColumnVec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>>,
-        _elements: &InteractionElements,
-    ) -> Vec<CircleEvaluation<CpuBackend, BaseField, BitReversedOrder>> {
-        vec![]
-    }
-
-    fn to_air_prover(&self) -> impl AirProver<CpuBackend> {
-        self.clone()
-    }
-
-    fn composition_log_degree_bound(&self) -> u32 {
-        self.components
-            .iter()
-            .map(|component| component.max_constraint_log_degree_bound())
-            .max()
-            .unwrap()
-    }
-}
-
-impl AirProver<CpuBackend> for MultiFibonacciAir {
-    fn prover_components(&self) -> Vec<&dyn ComponentProver<CpuBackend>> {
-        self.components
-            .iter()
-            .map(|c| c as &dyn ComponentProver<CpuBackend>)
-            .collect_vec()
     }
 }
