@@ -171,10 +171,10 @@ impl<'a, 'b, B: BackendForChannel<MC>, MC: MerkleChannel> TreeBuilder<'a, 'b, B,
     ) -> TreeSubspan {
         let span = span!(Level::INFO, "Interpolation for commitment").entered();
         let col_start = self.polys.len();
-        let polys = columns
-            .into_iter()
-            .map(|eval| eval.interpolate_with_twiddles(self.commitment_scheme.twiddles))
-            .collect_vec();
+
+        let polys: Vec<CirclePoly<B>> =
+            B::interpolate_columns(&columns, self.commitment_scheme.twiddles);
+
         span.exit();
         self.polys.extend(polys);
         TreeSubspan {
