@@ -67,8 +67,8 @@ pub trait FrameworkEval {
 }
 
 pub struct FrameworkComponent<C: FrameworkEval> {
-    eval: C,
-    trace_locations: TreeVec<TreeSubspan>,
+    pub eval: C,
+    pub trace_locations: TreeVec<TreeSubspan>,
 }
 
 impl<E: FrameworkEval> FrameworkComponent<E> {
