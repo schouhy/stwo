@@ -96,7 +96,7 @@ mod tests {
     use crate::core::ColumnVec;
     use crate::examples::wide_fibonacci::{generate_trace, FibInput, WideFibonacciComponent};
 
-    const FIB_SEQUENCE_LENGTH: usize = 100;
+    const FIB_SEQUENCE_LENGTH: usize = 1024;
 
     fn generate_test_trace(
         log_n_instances: u32,
@@ -151,7 +151,7 @@ mod tests {
 
     #[test_log::test]
     fn test_wide_fib_prove() {
-        const LOG_N_INSTANCES: u32 = 6;
+        const LOG_N_INSTANCES: u32 = 16;
         let config = PcsConfig::default();
         // Precompute twiddles.
         let twiddles = SimdBackend::precompute_twiddles(

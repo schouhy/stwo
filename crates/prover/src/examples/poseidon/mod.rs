@@ -469,9 +469,7 @@ mod tests {
     #[test_log::test]
     fn test_simd_poseidon_prove() {
         // Note: To see time measurement, run test with
-        //   RUST_LOG_SPAN_EVENTS=enter,close RUST_LOG=info RUST_BACKTRACE=1 RUSTFLAGS="
-        //   -C target-cpu=native -C target-feature=+avx512f -C opt-level=3" cargo test
-        //   test_simd_poseidon_prove -- --nocapture
+        //   RUST_LOG_SPAN_EVENTS=enter,close RUST_LOG=info RUST_BACKTRACE=1 RUSTFLAGS=" -C target-cpu=native -C target-feature=+avx512f -C opt-level=3" cargo test test_simd_poseidon_prove -- --nocapture
 
         // Get from environment variable:
         let log_n_instances = env::var("LOG_N_INSTANCES")
