@@ -47,12 +47,12 @@ impl PointEvaluationAccumulator {
 /// Accumulates evaluations of u_i(P), each at an evaluation domain of the size of that polynomial.
 /// Computes the coefficients of f(P).
 pub struct DomainEvaluationAccumulator<B: Backend> {
-    random_coeff_powers: Vec<SecureField>,
+    pub random_coeff_powers: Vec<SecureField>,
     /// Accumulated evaluations for each log_size.
     /// Each `sub_accumulation` holds the sum over all columns i of that log_size, of
     /// `evaluation_i * alpha^(N - 1 - i)`
     /// where `N` is the total number of evaluations.
-    sub_accumulations: Vec<Option<SecureColumnByCoords<B>>>,
+    pub sub_accumulations: Vec<Option<SecureColumnByCoords<B>>>,
 }
 
 impl<B: Backend> DomainEvaluationAccumulator<B> {
