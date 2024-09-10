@@ -6,7 +6,6 @@ use crate::core::fields::qm31::SecureField;
 use crate::core::fields::FieldOps;
 use crate::core::poly::twiddles::TwiddleTree;
 use crate::core::poly::BitReversedOrder;
-use crate::core::ColumnVec;
 
 /// Operations on BaseField polynomials.
 pub trait PolyOps: FieldOps<BaseField> + Sized {
@@ -29,12 +28,12 @@ pub trait PolyOps: FieldOps<BaseField> + Sized {
     ) -> CirclePoly<Self>;
 
     fn interpolate_columns(
-        columns: &ColumnVec<CircleEvaluation<Self, BaseField, BitReversedOrder>>,
+        columns: impl IntoIterator<Item = CircleEvaluation<Self, BaseField, BitReversedOrder>>,
         twiddles: &TwiddleTree<Self>,
     ) -> Vec<CirclePoly<Self>> {
         columns
             .into_iter()
-            .map(|eval| Self::interpolate(eval.clone(), twiddles))
+            .map(|eval| eval.interpolate_with_twiddles(&twiddles))
             .collect()
     }
 
